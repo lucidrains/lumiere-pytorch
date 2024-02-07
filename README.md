@@ -2,6 +2,8 @@
 
 Implementation of <a href="https://lumiere-video.github.io/">Lumiere</a>, SOTA text-to-video generation from Google Deepmind, in Pytorch
 
+<a href="https://www.youtube.com/watch?v=Pl8BET_K1mc">Yannic's paper review</a>
+
 <a href="https://discord.gg/PvCfQZJR">Temporary discord discussion</a>
 
 ## Citations
