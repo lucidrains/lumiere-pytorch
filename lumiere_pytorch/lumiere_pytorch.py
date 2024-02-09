@@ -30,6 +30,20 @@ def divisible_by(num, den):
 def is_odd(n):
     return not divisible_by(n, 2)
 
+# helpers
+
+def Sequential(*modules):
+    modules = list(filter(exists, modules))
+    return nn.Sequential(*modules)
+
+class Residual(Module):
+    def __init__(self, fn: Module):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, t, *args, **kwargs):
+        return self.fn(t, *args, **kwargs) + t
+
 # main modules
 
 class ConvolutionInflationBlock(Module):
@@ -96,6 +110,8 @@ class AttentionInflationBlock(Module):
         *,
         dim,
         depth = 1,
+        prenorm = True,
+        residual_attn = True,
         **attn_kwargs
     ):
         super().__init__()
@@ -103,13 +119,16 @@ class AttentionInflationBlock(Module):
         self.temporal_attns = ModuleList([])
 
         for _ in range(depth):
-            attn = nn.Sequential(
-                RMSNorm(dim),
+            attn = Sequential(
+                RMSNorm(dim) if prenorm else None,
                 Attention(
                     dim = dim,
                     **attn_kwargs
                 )
             )
+
+            if residual_attn:
+                attn = Residual(attn)
 
             self.temporal_attns.append(attn)
 
