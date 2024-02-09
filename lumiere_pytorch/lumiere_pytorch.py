@@ -1,5 +1,5 @@
 import torch
-from torch import nn, einsum
+from torch import nn, einsum, Tensor
 from torch.nn import Module, ModuleList
 import torch.nn.functional as F
 
@@ -43,6 +43,42 @@ class Residual(Module):
 
     def forward(self, t, *args, **kwargs):
         return self.fn(t, *args, **kwargs) + t
+
+# temporal down and upsample
+
+def init_bilinear_kernel_1d_(conv: Module):
+    nn.init.zeros_(conv.weight)
+    if exists(conv.bias):
+        nn.init.zeros_(conv.bias)
+
+    channels = conv.weight.shape[0]
+    bilinear_kernel = Tensor([0.5, 1., 0.5])
+    diag_mask = torch.eye(channels).bool()
+    conv.weight.data[diag_mask] = bilinear_kernel
+
+class TemporalDownsample(Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.conv = nn.Conv1d(dim, dim, kernel_size = 3, stride = 2, padding = 1)
+        init_bilinear_kernel_1d_(self.conv)
+
+    def forward(
+        self,
+        x
+    ):
+        return self.conv(x)
+
+class TemporalUpsample(Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.conv = nn.ConvTranspose1d(dim, dim, kernel_size = 3, stride = 2, padding = 1, output_padding = 1)
+        init_bilinear_kernel_1d_(self.conv)
+
+    def forward(
+        self,
+        x
+    ):
+        return self.conv(x)
 
 # main modules
 
