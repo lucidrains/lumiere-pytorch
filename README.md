@@ -4,6 +4,8 @@ Implementation of <a href="https://lumiere-video.github.io/">Lumiere</a>, SOTA t
 
 <a href="https://www.youtube.com/watch?v=Pl8BET_K1mc">Yannic's paper review</a>
 
+Since this paper is mostly just a few key ideas on top of text-to-image model, will take it a step further and extend the new <a href="https://github.com/lucidrains/denoising-diffusion-pytorch/blob/main/denoising_diffusion_pytorch/karras_unet.py">Karras U-net</a> to video within this repository.
+
 ## Citations
 
 ```bibtex
@@ -14,3 +16,15 @@ Implementation of <a href="https://lumiere-video.github.io/">Lumiere</a>, SOTA t
     url     = {https://api.semanticscholar.org/CorpusID:267095113}
 }
 ```
+
+```bibtex
+@article{Karras2023AnalyzingAI,
+    title   = {Analyzing and Improving the Training Dynamics of Diffusion Models},
+    author  = {Tero Karras and Miika Aittala and Jaakko Lehtinen and Janne Hellsten and Timo Aila and Samuli Laine},
+    journal = {ArXiv},
+    year    = {2023},
+    volume  = {abs/2312.02696},
+    url     = {https://api.semanticscholar.org/CorpusID:265659032}
+}
+```
+
