@@ -1,3 +1,5 @@
+<img src="./lumiere.png" width="450px"></img>
+
 ## Lumiere - Pytorch (wip)
 
 Implementation of <a href="https://lumiere-video.github.io/">Lumiere</a>, SOTA text-to-video generation from Google Deepmind, in Pytorch
