@@ -1,3 +1,5 @@
+from functools import wraps
+
 import torch
 from torch import nn, einsum, Tensor
 from torch.nn import Module, ModuleList
@@ -29,6 +31,43 @@ def divisible_by(num, den):
 
 def is_odd(n):
     return not divisible_by(n, 2)
+
+# decorator for converting an input tensor from either image or video format to 1d time
+
+def image_or_video_to_time(fn):
+
+    @wraps(fn)
+    def inner(
+        self,
+        x,
+        batch_size = None,
+        **kwargs
+    ):
+
+        is_video = x.ndim == 5
+        assert is_video ^ exists(batch_size), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
+
+        if is_video:
+            batch_size = x.shape[0]
+            x = rearrange(x, 'b c t h w -> b h w c t')
+        else:
+            assert exists(batch_size)
+            x = rearrange(x, '(b t) c h w -> b h w c t', b = batch_size)
+
+        x, ps = pack_one(x, '* c t')
+
+        x = fn(self, x, **kwargs)
+
+        x = unpack_one(x, ps, '* c t')
+
+        if is_video:
+            x = rearrange(x, 'b h w c t -> b c t h w')
+        else:
+            x = rearrange(x, 'b h w c t -> (b t) c h w')
+
+        return x
+
+    return inner
 
 # helpers
 
@@ -62,6 +101,7 @@ class TemporalDownsample(Module):
         self.conv = nn.Conv1d(dim, dim, kernel_size = 3, stride = 2, padding = 1)
         init_bilinear_kernel_1d_(self.conv)
 
+    @image_or_video_to_time
     def forward(
         self,
         x
@@ -74,6 +114,7 @@ class TemporalUpsample(Module):
         self.conv = nn.ConvTranspose1d(dim, dim, kernel_size = 3, stride = 2, padding = 1, output_padding = 1)
         init_bilinear_kernel_1d_(self.conv)
 
+    @image_or_video_to_time
     def forward(
         self,
         x
@@ -181,7 +222,6 @@ class AttentionInflationBlock(Module):
         x,
         batch_size = None
     ):
-        residual = x
         is_video = x.ndim == 5
         assert is_video ^ exists(batch_size), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
 
@@ -194,10 +234,14 @@ class AttentionInflationBlock(Module):
 
         x, ps = pack_one(x, '* t c')
 
+        residual = x
+
         for attn in self.temporal_attns:
             x = attn(x) + x
 
         x = self.proj_out(x)
+
+        x = x + residual
 
         x = unpack_one(x, ps, '* t c')
 
@@ -206,4 +250,4 @@ class AttentionInflationBlock(Module):
         else:
             x = rearrange(x, 'b h w t c -> (b t) c h w')
 
-        return x + residual
+        return x
