@@ -73,6 +73,9 @@ class ConvolutionInflationBlock(Module):
 
         self.proj_out = nn.Conv1d(dim, dim, 1)
 
+        nn.init.zeros_(self.proj_out.weight)
+        nn.init.zeros_(self.proj_out.bias)
+
     def forward(
         self,
         x,
@@ -133,6 +136,9 @@ class AttentionInflationBlock(Module):
             self.temporal_attns.append(attn)
 
         self.proj_out = nn.Linear(dim, dim)
+
+        nn.init.zeros_(self.proj_out.weight)
+        nn.init.zeros_(self.proj_out.bias)
 
     def forward(
         self,
