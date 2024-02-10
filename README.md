@@ -48,6 +48,22 @@ denoised_video = lumiere(noised_video, time = time, class_labels = class_labels)
 assert noised_video.shape == denoised_video.shape
 ```
 
+## Todo
+
+- [ ] add all temporal layers
+    - [ ] researcher must pass in all layers for
+        - [ ] conv inflation modules (stages)
+        - [ ] attn inflation modules (middle)
+        - [ ] temporal downsample
+        - [ ] temporal upsamples
+    - [ ] validate time dimension is 2 ** downsample layers
+    - [ ] validate number of downsamples == upsamples
+    - [ ] at init, do a dry run with a mock tensor and assert output is the same
+
+- [ ] expose only temporal parameters for learning, freeze everything else
+
+- [ ] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
+
 ## Citations
 
 ```bibtex
