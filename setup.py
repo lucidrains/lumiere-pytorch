@@ -17,6 +17,7 @@ setup(
   ],
   install_requires=[
     'einops>=0.7.0',
+    'optree',
     'torch>=2.0',
     'x-transformers'
   ],
