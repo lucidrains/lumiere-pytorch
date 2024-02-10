@@ -7,6 +7,8 @@ import torch.nn.functional as F
 
 from einops import rearrange, pack, unpack
 
+from optree import tree_flatten, tree_unflatten
+
 from x_transformers.x_transformers import (
     Attention,
     RMSNorm
@@ -122,6 +124,8 @@ class TemporalDownsample(Module):
         self,
         x
     ):
+        assert x.shape[-1] > 1, 'time dimension must be greater than 1 to be compressed'
+
         return self.conv(x)
 
 class TemporalUpsample(Module):
@@ -283,3 +287,24 @@ class AttentionInflationBlock(Module):
             x = rearrange(x, 'b h w t c -> (b t) c h w')
 
         return x
+
+# main wrapper model around text-to-image
+
+class Lumiere(Module):
+    def __init__(
+        self,
+        model: Module,
+        *,
+        image_size: int,
+        channels: int = 3
+    ):
+        super().__init__()
+        self.model = model
+
+    def forward(
+        self,
+        video,
+        *args,
+        **kwargs
+    ):
+        return video

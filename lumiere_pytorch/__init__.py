@@ -5,3 +5,5 @@ from lumiere_pytorch.lumiere_pytorch import (
     TemporalUpsample,
     set_time_dim_
 )
+
+from lumiere_pytorch.lumiere_pytorch import Lumiere
