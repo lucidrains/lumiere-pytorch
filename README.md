@@ -12,6 +12,42 @@ Since this paper is mostly just a few key ideas on top of text-to-image model, w
 
 - <a href="https://a16z.com/supporting-the-open-source-ai-community/">A16Z Open Source AI Grant Program</a> and <a href="https://huggingface.co/">🤗 Huggingface</a> for the generous sponsorships, as well as my other sponsors, for affording me the independence to open source current artificial intelligence research
 
+## Install
+
+```bash
+$ pip install lumiere-pytorch
+```
+
+## Usage
+
+```python
+import torch
+from lumiere_pytorch import Lumiere
+
+from denoising_diffusion_pytorch import KarrasUnet
+
+karras_unet = KarrasUnet(
+    image_size = 256,
+    dim = 8,
+    channels = 3,
+    dim_max = 768,
+    num_classes = 1000,
+)
+
+lumiere = Lumiere(
+    karras_unet,
+    image_size = 256
+)
+
+noised_video = torch.randn(2, 3, 8, 256, 256)
+time = torch.ones(2,)
+class_labels = torch.randint(0, 1000, (2,))
+
+denoised_video = lumiere(noised_video, time = time, class_labels = class_labels)
+
+assert noised_video.shape == denoised_video.shape
+```
+
 ## Citations
 
 ```bibtex
