@@ -349,6 +349,10 @@ class Lumiere(Module):
         all_args = tree_unflatten(pytree_spec, all_args)
         args, kwargs = all_args
 
+        # set the correct time dimension for all temporal layers
+
+        set_time_dim_(self.model, time)
+
         # forward all images into text-to-image model
 
         images = self.model(images, *args, **kwargs)
