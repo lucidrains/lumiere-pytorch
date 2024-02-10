@@ -32,6 +32,16 @@ def divisible_by(num, den):
 def is_odd(n):
     return not divisible_by(n, 2)
 
+def compact_values(d: dict):
+    return {k: v for k, v in d.items() if exists(v)}
+
+# function that takes in the entire text-to-video network, and sets the time dimension
+
+def set_time_dim_(model: Module, time_dim: int):
+    for model in model.modules():
+        if isinstance(model, (AttentionInflationBlock, ConvolutionInflationBlock, TemporalUpsample, TemporalDownsample)):
+            model.time_dim = time_dim
+
 # decorator for converting an input tensor from either image or video format to 1d time
 
 def image_or_video_to_time(fn):
@@ -45,14 +55,14 @@ def image_or_video_to_time(fn):
     ):
 
         is_video = x.ndim == 5
-        assert is_video ^ exists(batch_size), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
 
         if is_video:
             batch_size = x.shape[0]
             x = rearrange(x, 'b c t h w -> b h w c t')
         else:
-            assert exists(batch_size)
-            x = rearrange(x, '(b t) c h w -> b h w c t', b = batch_size)
+            assert exists(batch_size) or exists(self.time_dim)
+            rearrange_kwargs = dict(b = batch_size, t = self.time_dim)
+            x = rearrange(x, '(b t) c h w -> b h w c t', **compact_values(rearrange_kwargs))
 
         x, ps = pack_one(x, '* c t')
 
@@ -96,8 +106,14 @@ def init_bilinear_kernel_1d_(conv: Module):
     conv.weight.data[diag_mask] = bilinear_kernel
 
 class TemporalDownsample(Module):
-    def __init__(self, dim):
+    def __init__(
+        self,
+        dim,
+        time_dim = None
+    ):
         super().__init__()
+        self.time_dim = time_dim
+
         self.conv = nn.Conv1d(dim, dim, kernel_size = 3, stride = 2, padding = 1)
         init_bilinear_kernel_1d_(self.conv)
 
@@ -109,8 +125,14 @@ class TemporalDownsample(Module):
         return self.conv(x)
 
 class TemporalUpsample(Module):
-    def __init__(self, dim):
+    def __init__(
+        self,
+        dim,
+        time_dim = None
+    ):
         super().__init__()
+        self.time_dim = time_dim
+
         self.conv = nn.ConvTranspose1d(dim, dim, kernel_size = 3, stride = 2, padding = 1, output_padding = 1)
         init_bilinear_kernel_1d_(self.conv)
 
@@ -130,11 +152,14 @@ class ConvolutionInflationBlock(Module):
         dim,
         conv2d_kernel_size = 3,
         conv1d_kernel_size = 3,
-        groups = 8
+        groups = 8,
+        time_dim = None
     ):
         super().__init__()
         assert is_odd(conv2d_kernel_size)
         assert is_odd(conv1d_kernel_size)
+
+        self.time_dim = time_dim
 
         self.spatial_conv = nn.Sequential(
             nn.Conv2d(dim, dim, conv2d_kernel_size, padding = conv2d_kernel_size // 2),
@@ -160,7 +185,6 @@ class ConvolutionInflationBlock(Module):
     ):
         residual = x
         is_video = x.ndim == 5
-        assert is_video ^ exists(batch_size), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
 
         if is_video:
             batch_size = x.shape[0]
@@ -168,7 +192,10 @@ class ConvolutionInflationBlock(Module):
 
         x = self.spatial_conv(x)
 
-        x = rearrange(x, '(b t) c h w -> b h w c t', b = batch_size)
+        rearrange_kwargs = compact_values(dict(b = batch_size, t = self.time_dim))
+
+        assert len(rearrange_kwargs) > 0, 'either batch_size is passed in on forward, or time_dim is set on init'
+        x = rearrange(x, '(b t) c h w -> b h w c t', **rearrange_kwargs)
 
         x, ps = pack_one(x, '* c t')
 
@@ -192,9 +219,12 @@ class AttentionInflationBlock(Module):
         depth = 1,
         prenorm = True,
         residual_attn = True,
+        time_dim = None,
         **attn_kwargs
     ):
         super().__init__()
+
+        self.time_dim = time_dim
 
         self.temporal_attns = ModuleList([])
 
@@ -223,14 +253,16 @@ class AttentionInflationBlock(Module):
         batch_size = None
     ):
         is_video = x.ndim == 5
-        assert is_video ^ exists(batch_size), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
+        assert is_video ^ (exists(batch_size) or exists(self.time_dim)), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
 
         if is_video:
             batch_size = x.shape[0]
             x = rearrange(x, 'b c t h w -> b h w t c')
         else:
-            assert exists(batch_size)
-            x = rearrange(x, '(b t) c h w -> b h w t c', b = batch_size)
+            assert exists(batch_size) or exists(self.time_dim)
+
+            rearrange_kwargs = dict(b = batch_size, t = self.time_dim)
+            x = rearrange(x, '(b t) c h w -> b h w t c', **compact_values(rearrange_kwargs))
 
         x, ps = pack_one(x, '* t c')
 
