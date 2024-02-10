@@ -237,7 +237,7 @@ class AttentionInflationBlock(Module):
         residual = x
 
         for attn in self.temporal_attns:
-            x = attn(x) + x
+            x = attn(x)
 
         x = self.proj_out(x)
 
