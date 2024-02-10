@@ -1,11 +1,13 @@
 from functools import wraps
 
 import torch
-from torch import nn, einsum, Tensor
+from torch import nn, einsum, Tensor, is_tensor
 from torch.nn import Module, ModuleList
 import torch.nn.functional as F
 
-from einops import rearrange, pack, unpack
+from beartype import beartype
+
+from einops import rearrange, pack, unpack, repeat
 
 from optree import tree_flatten, tree_unflatten
 
@@ -36,6 +38,19 @@ def is_odd(n):
 
 def compact_values(d: dict):
     return {k: v for k, v in d.items() if exists(v)}
+
+# freezing text-to-image, and only learning temporal parameters
+
+@beartype
+def set_module_requires_grad_(
+    module: Module,
+    requires_grad: bool
+):
+    for param in module.parameters():
+        param.requires_grad = requires_grad
+
+def freeze_all_layers_(module):
+    set_module_requires_grad_(module, False)
 
 # function that takes in the entire text-to-video network, and sets the time dimension
 
@@ -300,11 +315,44 @@ class Lumiere(Module):
     ):
         super().__init__()
         self.model = model
+        freeze_all_layers_(model)
 
+    @beartype
     def forward(
         self,
-        video,
+        video: Tensor,
         *args,
         **kwargs
-    ):
-        return video
+    ) -> Tensor:
+
+        assert video.ndim == 5
+        batch, _, time, *_ = video.shape
+
+        # find all arguments that are Tensors
+
+        all_args = (args, kwargs)
+        all_args, pytree_spec = tree_flatten(all_args)
+
+        # and repeat across for each frame of the video
+        # so one conditions all images of each video with same input
+
+        for ind, arg in enumerate(all_args):
+            if is_tensor(arg):
+                all_args[ind] = repeat(arg, 'b ... -> (b t) ...', t = time)
+
+        # turn video into a stack of images
+
+        images = rearrange(video, 'b c t h w -> (b t) c h w')
+
+        # unflatten arguments to be passed into text-to-image model
+
+        all_args = tree_unflatten(pytree_spec, all_args)
+        args, kwargs = all_args
+
+        # forward all images into text-to-image model
+
+        images = self.model(images, *args, **kwargs)
+
+        # reshape back to denoised video
+
+        return rearrange(images, '(b t) c h w -> b c t h w', b = batch)
