@@ -50,17 +50,19 @@ assert noised_video.shape == denoised_video.shape
 
 ## Todo
 
-- [ ] add all temporal layers
-    - [ ] researcher must pass in all layers for
-        - [ ] conv inflation modules (stages)
-        - [ ] attn inflation modules (middle)
-        - [ ] temporal downsample
-        - [ ] temporal upsamples
-    - [ ] validate time dimension is 2 ** downsample layers
-    - [ ] validate number of downsamples == upsamples
-    - [ ] at init, do a dry run with a mock tensor and assert output is the same
+- [x] add all temporal layers
+    - [x] researcher must pass in all layers for
+        - [x] conv inflation modules (stages)
+        - [x] attn inflation modules (middle)
+        - [x] temporal downsample
+        - [x] temporal upsamples
+    - [x] validate time dimension is 2 ** downsample layers
+    - [x] validate number of downsamples == upsamples
+    - [x] at init, do a dry run with a mock tensor and assert output is the same
 
-- [ ] expose only temporal parameters for learning, freeze everything else
+- [x] expose only temporal parameters for learning, freeze everything else
+
+- [ ] figure out the best way to deal with the time conditioning after temporal downsampling - instead of pytree transform at the beginning, probably will need to hook into all the modules and inspect the batch sizes
 
 - [ ] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
 

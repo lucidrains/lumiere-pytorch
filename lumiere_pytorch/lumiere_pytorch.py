@@ -1,3 +1,13 @@
+"""
+einstein notation
+b - batch
+t - time
+c - channels
+h - height
+w - width
+"""
+
+from copy import deepcopy
 from functools import wraps
 
 import torch
@@ -6,6 +16,7 @@ from torch.nn import Module, ModuleList
 import torch.nn.functional as F
 
 from beartype import beartype
+from beartype.typing import List, Tuple, Optional
 
 from einops import rearrange, pack, unpack, repeat
 
@@ -38,6 +49,33 @@ def is_odd(n):
 
 def compact_values(d: dict):
     return {k: v for k, v in d.items() if exists(v)}
+
+# extract dimensions using hooks
+
+@beartype
+def extract_output_shapes(
+    modules: List[Module],
+    model: Module,
+    model_input,
+    model_kwargs: dict = dict()
+):
+    shapes = []
+    hooks = []
+
+    def hook_fn(_, input, output):
+        return shapes.append(output.shape)
+
+    for module in modules:
+        hook = module.register_forward_hook(hook_fn)
+        hooks.append(hook)
+
+    with torch.no_grad():
+        model(model_input, **model_kwargs)
+
+    for hook in hooks:
+        hook.remove()
+
+    return shapes
 
 # freezing text-to-image, and only learning temporal parameters
 
@@ -303,19 +341,111 @@ class AttentionInflationBlock(Module):
 
         return x
 
+# post module hook wrapper
+
+class PostModuleHookWrapper(Module):
+    def __init__(self, temporal_module: Module):
+        super().__init__()
+        self.temporal_module = temporal_module
+
+    def forward(self, _, input, output):
+        output = self.temporal_module(output)
+        return output
+
+def insert_temporal_modules_(modules: List[Module], temporal_modules: ModuleList):
+    assert len(modules) == len(temporal_modules)
+
+    for module, temporal_module in zip(modules, temporal_modules):
+        module.register_forward_hook(PostModuleHookWrapper(temporal_module))
+
 # main wrapper model around text-to-image
 
 class Lumiere(Module):
+
+    @beartype
     def __init__(
         self,
         model: Module,
         *,
         image_size: int,
-        channels: int = 3
+        unet_time_kwarg: str,
+        conv_module_names: List[str],
+        attn_module_names: List[str] = [],
+        downsample_module_names: List[str] = [],
+        upsample_module_names: List[str] = [],
+        channels: int = 3,
+        conv_inflation_kwargs: dict = dict(),
+        attn_inflation_kwargs: dict = dict()
     ):
         super().__init__()
-        self.model = model
+
+        model = deepcopy(model)
         freeze_all_layers_(model)
+        self.model = model
+
+        # all modules in text-to-images model indexed by name
+
+        modules_dict = {name: module for name, module in model.named_modules() if not isinstance(module, ModuleList)}
+
+        all_module_names = conv_module_names + attn_module_names + downsample_module_names + upsample_module_names
+
+        for name in all_module_names:
+            assert name in modules_dict, f'module name {name} not found in the unet {modules_dict.keys()}'
+
+        assert len(downsample_module_names) == len(upsample_module_names), 'one must have the same number of temporal downsample modules as temporal upsample modules'
+
+        # get all modules
+
+        conv_modules = [modules_dict[name] for name in conv_module_names]
+        attn_modules = [modules_dict[name] for name in attn_module_names]
+        downsample_modules = [modules_dict[name] for name in downsample_module_names]
+        upsample_modules = [modules_dict[name] for name in upsample_module_names]
+
+        # mock input, to auto-derive dimensions
+
+        self.channels = channels
+        self.image_size = image_size
+
+        mock_images = torch.randn(1, channels, image_size, image_size)
+        mock_time = torch.ones((1,))
+        unet_kwarg = {unet_time_kwarg: mock_time}
+
+        # get all dimensions
+
+        conv_shapes = extract_output_shapes(conv_modules, self.model, mock_images, unet_kwarg)
+        attn_shapes = extract_output_shapes(attn_modules, self.model, mock_images, unet_kwarg)
+        downsample_shapes = extract_output_shapes(downsample_modules, self.model, mock_images, unet_kwarg)
+        upsample_shapes = extract_output_shapes(upsample_modules, self.model, mock_images, unet_kwarg)
+
+        # all modules
+
+        self.convs = ModuleList([ConvolutionInflationBlock(dim = shape[1], **conv_inflation_kwargs) for shape in conv_shapes])
+        self.attns = ModuleList([AttentionInflationBlock(dim = shape[1], **attn_inflation_kwargs) for shape in attn_shapes])
+        self.downsamples = ModuleList([TemporalDownsample(dim = shape[1]) for shape in downsample_shapes])
+        self.upsamples = ModuleList([TemporalUpsample(dim = shape[1]) for shape in upsample_shapes])
+
+        # insert all the temporal modules with hooks
+
+        insert_temporal_modules_(conv_modules, self.convs)
+        insert_temporal_modules_(attn_modules, self.attns)
+        insert_temporal_modules_(downsample_modules, self.downsamples)
+        insert_temporal_modules_(upsample_modules, self.upsamples)
+
+        # validate modules
+
+        assert len(self.parameters()) > 0, 'no temporal parameters to be learned'
+
+    @property
+    def downsample_factor(self):
+        return 2 ** len(self.downsamples)
+
+    def parameters(self):
+        return [
+            *self.convs.parameters(),
+            *self.attns.parameters(),
+            *self.downsamples.parameters(),
+            *self.upsamples.parameters(),
+        ]
 
     @beartype
     def forward(
@@ -326,7 +456,12 @@ class Lumiere(Module):
     ) -> Tensor:
 
         assert video.ndim == 5
-        batch, _, time, *_ = video.shape
+        batch, channels, time, height, width = video.shape
+
+        assert channels == self.channels
+        assert (height, width) == (self.image_size, self.image_size)
+
+        assert divisible_by(time, self.downsample_factor)
 
         # find all arguments that are Tensors
 
@@ -351,7 +486,10 @@ class Lumiere(Module):
 
         # set the correct time dimension for all temporal layers
 
-        set_time_dim_(self.model, time)
+        set_time_dim_(self.convs, time)
+        set_time_dim_(self.attns, time)
+        set_time_dim_(self.downsamples, time)
+        set_time_dim_(self.upsamples, time)
 
         # forward all images into text-to-image model
 
