@@ -486,10 +486,7 @@ class Lumiere(Module):
 
         # set the correct time dimension for all temporal layers
 
-        set_time_dim_(self.convs, time)
-        set_time_dim_(self.attns, time)
-        set_time_dim_(self.downsamples, time)
-        set_time_dim_(self.upsamples, time)
+        set_time_dim_(self, time)
 
         # forward all images into text-to-image model
 
