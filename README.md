@@ -72,6 +72,7 @@ assert noised_video.shape == denoised_video.shape
 
 - [ ] handle middle modules that may have output shape as `(batch, seq, dim)`
 - [ ] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
+- [ ] test out on <a href="https://github.com/lucidrains/imagen-pytorch">imagen-pytorch</a>
 
 ## Citations
 
