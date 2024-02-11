@@ -30,20 +30,26 @@ karras_unet = KarrasUnet(
     image_size = 256,
     dim = 8,
     channels = 3,
-    dim_max = 768,
-    num_classes = 1000,
+    dim_max = 768
 )
 
 lumiere = Lumiere(
     karras_unet,
-    image_size = 256
+    image_size = 256,
+    unet_time_kwarg = 'time',
+    conv_module_names = [
+        'downs.1',
+        'ups.1'
+    ],
+    attn_module_names = [
+        'mids.0'
+    ],
 )
 
 noised_video = torch.randn(2, 3, 8, 256, 256)
 time = torch.ones(2,)
-class_labels = torch.randint(0, 1000, (2,))
 
-denoised_video = lumiere(noised_video, time = time, class_labels = class_labels)
+denoised_video = lumiere(noised_video, time = time)
 
 assert noised_video.shape == denoised_video.shape
 ```
@@ -64,6 +70,7 @@ assert noised_video.shape == denoised_video.shape
 
 - [ ] figure out the best way to deal with the time conditioning after temporal downsampling - instead of pytree transform at the beginning, probably will need to hook into all the modules and inspect the batch sizes
 
+- [ ] handle middle modules that may have output shape as `(batch, seq, dim)`
 - [ ] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
 
 ## Citations
