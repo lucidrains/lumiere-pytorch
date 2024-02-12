@@ -431,6 +431,42 @@ class Lumiere(Module):
         insert_temporal_modules_(downsample_modules, self.downsamples)
         insert_temporal_modules_(upsample_modules, self.upsamples)
 
+        # if there is any temporal downsampling
+        # auto repeat all tensors that are not the main image tensor
+
+        def auto_repeat_tensors_for_time(_, args, kwargs):
+            first_arg, *rest_args = args
+
+            all_rest_args = (rest_args, kwargs)
+            all_rest_args, pytree_spec = tree_flatten(all_rest_args)
+
+            if not is_tensor(first_arg) or len(all_rest_args) == 0:
+                return args, kwargs
+
+            inferred_batch_time = first_arg.shape[0]
+            out_rest_args = []
+
+            for arg in all_rest_args:
+                if is_tensor(arg):
+                    cond_batch = arg.shape[0]
+
+                    if cond_batch < inferred_batch_time:
+                        arg = repeat(arg, 'b ... -> (b t) ...', t = inferred_batch_time // cond_batch)
+                    elif cond_batch > inferred_batch_time:
+                        arg = rearrange(arg, '(b t) ... -> b t ...', b = inferred_batch_time)
+                        arg = arg[:, 0]
+
+                out_rest_args.append(arg)
+
+            rest_args, kwargs = tree_unflatten(pytree_spec, out_rest_args)
+            return (first_arg, *rest_args), kwargs
+
+        for module in self.modules():
+            if module == self:
+                continue
+
+            module.register_forward_pre_hook(auto_repeat_tensors_for_time, with_kwargs = True)
+
         # validate modules
 
         assert len(self.parameters()) > 0, 'no temporal parameters to be learned'
@@ -463,26 +499,9 @@ class Lumiere(Module):
 
         assert divisible_by(time, self.downsample_factor)
 
-        # find all arguments that are Tensors
-
-        all_args = (args, kwargs)
-        all_args, pytree_spec = tree_flatten(all_args)
-
-        # and repeat across for each frame of the video
-        # so one conditions all images of each video with same input
-
-        for ind, arg in enumerate(all_args):
-            if is_tensor(arg):
-                all_args[ind] = repeat(arg, 'b ... -> (b t) ...', t = time)
-
         # turn video into a stack of images
 
         images = rearrange(video, 'b c t h w -> (b t) c h w')
-
-        # unflatten arguments to be passed into text-to-image model
-
-        all_args = tree_unflatten(pytree_spec, all_args)
-        args, kwargs = all_args
 
         # set the correct time dimension for all temporal layers
 

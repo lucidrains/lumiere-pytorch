@@ -44,6 +44,12 @@ lumiere = Lumiere(
     attn_module_names = [
         'mids.0'
     ],
+    upsample_module_names = [
+        'ups.1'
+    ],
+    downsample_module_names = [
+        'downs.1'
+    ]
 )
 
 noised_video = torch.randn(2, 3, 8, 256, 256)
@@ -67,8 +73,7 @@ assert noised_video.shape == denoised_video.shape
     - [x] at init, do a dry run with a mock tensor and assert output is the same
 
 - [x] expose only temporal parameters for learning, freeze everything else
-
-- [ ] figure out the best way to deal with the time conditioning after temporal downsampling - instead of pytree transform at the beginning, probably will need to hook into all the modules and inspect the batch sizes
+- [x] figure out the best way to deal with the time conditioning after temporal downsampling - instead of pytree transform at the beginning, probably will need to hook into all the modules and inspect the batch sizes
 
 - [ ] handle middle modules that may have output shape as `(batch, seq, dim)`
 - [ ] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
