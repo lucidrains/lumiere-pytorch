@@ -1,13 +1,9 @@
 """
-einstein notation
-b - batch
-t - time
-c - channels
-h - height
-w - width
+the magnitude-preserving modules proposed in https://arxiv.org/abs/2312.02696 by Karras et al.
 """
 
-from functools import wraps, partial
+from math import sqrt
+from functools import partial
 
 import torch
 from torch import nn, einsum, Tensor, is_tensor
@@ -20,17 +16,9 @@ from beartype.typing import List, Tuple, Optional, Type
 from einops import rearrange, pack, unpack, repeat
 
 from lumiere_pytorch.lumiere import (
-    residualize,
     image_or_video_to_time,
     handle_maybe_channel_last,
-    Sequential,
-    Residual,
     Lumiere
-)
-
-from x_transformers.x_transformers import (
-    Attention,
-    RMSNorm
 )
 
 # helpers
@@ -55,6 +43,123 @@ def is_odd(n):
 
 def compact_values(d: dict):
     return {k: v for k, v in d.items() if exists(v)}
+
+# in paper, they use eps 1e-4 for pixelnorm
+
+def l2norm(t, dim = -1, eps = 1e-12):
+    return F.normalize(t, dim = dim, eps = eps)
+
+# mp activations
+# section 2.5
+
+class MPSiLU(Module):
+    def forward(self, x):
+        return F.silu(x) / 0.596
+
+# gain - layer scaling
+
+class Gain(Module):
+    def __init__(self):
+        super().__init__()
+        self.gain = nn.Parameter(torch.tensor(0.))
+
+    def forward(self, x):
+        return x * self.gain
+
+# mp linear
+
+class Linear(Module):
+    def __init__(self, dim_in, dim_out, eps = 1e-4):
+        super().__init__()
+        weight = torch.randn(dim_out, dim_in)
+        self.weight = nn.Parameter(weight)
+        self.eps = eps
+        self.fan_in = dim_in
+
+    def forward(self, x):
+        if self.training:
+            with torch.no_grad():
+                normed_weight = l2norm(self.weight, eps = self.eps)
+                self.weight.copy_(normed_weight)
+
+        weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
+        return F.linear(x, weight)
+
+# pixelnorm
+# equation (30)
+
+class PixelNorm(Module):
+    def __init__(self, dim, eps = 1e-4):
+        super().__init__()
+        # high epsilon for the pixel norm in the paper
+        self.dim = dim
+        self.eps = eps
+
+    def forward(self, x):
+        dim = self.dim
+        return l2norm(x, dim = dim, eps = self.eps) * sqrt(x.shape[dim])
+
+# magnitude preserving sum
+# equation (88)
+# empirically, they found t=0.3 for encoder / decoder / attention residuals
+# and for embedding, t=0.5
+
+class MPAdd(Module):
+    def __init__(self, t):
+        super().__init__()
+        self.t = t
+
+    def forward(self, x, res):
+        a, b, t = x, res, self.t
+        num = a * (1. - t) + b * t
+        den = sqrt((1 - t) ** 2 + t ** 2)
+        return num / den
+
+# mp attention
+
+class MPAttention(Module):
+    def __init__(
+        self,
+        dim,
+        heads = 4,
+        dim_head = 64,
+        num_mem_kv = 4,
+        mp_add_t = 0.3
+    ):
+        super().__init__()
+        self.heads = heads
+        hidden_dim = dim_head * heads
+
+        self.scale = dim_head ** -0.5
+        self.pixel_norm = PixelNorm(dim = -1)
+
+        self.mem_kv = nn.Parameter(torch.randn(2, heads, num_mem_kv, dim_head))
+        self.to_qkv = Linear(dim, hidden_dim * 3)
+        self.to_out = Linear(hidden_dim, dim)
+
+        self.mp_add = MPAdd(t = mp_add_t)
+
+    def forward(self, x):
+        res, b = x, x.shape[0]
+
+        qkv = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)
+
+        mk, mv = map(lambda t: repeat(t, 'h n d -> b h n d', b = b), self.mem_kv)
+        k, v = map(partial(torch.cat, dim = -2), ((mk, k), (mv, v)))
+
+        q, k, v = map(self.pixel_norm, (q, k, v))
+
+        q = q * self.scale
+
+        sim = einsum('b h i d, b h j d -> b h i j', q, k)
+        attn = sim.softmax(dim = -1)
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = self.to_out(out)
+
+        return self.mp_add(out, res)
 
 # temporal down and upsample
 
@@ -123,9 +228,9 @@ class MPConvolutionInflationBlock(Module):
         dim,
         conv2d_kernel_size = 3,
         conv1d_kernel_size = 3,
-        groups = 8,
         channel_last = False,
-        time_dim = None
+        time_dim = None,
+        mp_add_t = 0.3
     ):
         super().__init__()
         assert is_odd(conv2d_kernel_size)
@@ -136,14 +241,12 @@ class MPConvolutionInflationBlock(Module):
 
         self.spatial_conv = nn.Sequential(
             nn.Conv2d(dim, dim, conv2d_kernel_size, padding = conv2d_kernel_size // 2),
-            nn.GroupNorm(groups, num_channels = dim),
-            nn.SiLU()
+            MPSiLU()
         )
 
         self.temporal_conv = nn.Sequential(
             nn.Conv1d(dim, dim, conv1d_kernel_size, padding = conv1d_kernel_size // 2),
-            nn.GroupNorm(groups, num_channels = dim),
-            nn.SiLU()
+            MPSiLU()
         )
 
         self.proj_out = nn.Conv1d(dim, dim, 1)
@@ -151,13 +254,16 @@ class MPConvolutionInflationBlock(Module):
         nn.init.zeros_(self.proj_out.weight)
         nn.init.zeros_(self.proj_out.bias)
 
-    @residualize
+        self.residual_mp_add = MPAdd(t = mp_add_t)
+
     @handle_maybe_channel_last
     def forward(
         self,
         x,
         batch_size = None
     ):
+        residual = x
+
         is_video = x.ndim == 5
 
         if is_video:
@@ -183,7 +289,7 @@ class MPConvolutionInflationBlock(Module):
         else:
             x = rearrange(x, 'b h w c t -> (b t) c h w')
 
-        return x
+        return self.residual_mp_add(x, residual)
 
 class MPAttentionInflationBlock(Module):
     def __init__(
@@ -191,10 +297,9 @@ class MPAttentionInflationBlock(Module):
         *,
         dim,
         depth = 1,
-        prenorm = True,
-        residual_attn = True,
         time_dim = None,
         channel_last = False,
+        mp_add_t = 0.3,
         **attn_kwargs
     ):
         super().__init__()
@@ -205,25 +310,20 @@ class MPAttentionInflationBlock(Module):
         self.temporal_attns = ModuleList([])
 
         for _ in range(depth):
-            attn = Sequential(
-                RMSNorm(dim) if prenorm else None,
-                Attention(
-                    dim = dim,
-                    **attn_kwargs
-                )
+            attn = MPAttention(
+                dim = dim,
+                **attn_kwargs
             )
-
-            if residual_attn:
-                attn = Residual(attn)
 
             self.temporal_attns.append(attn)
 
-        self.proj_out = nn.Linear(dim, dim)
+        self.proj_out = nn.Sequential(
+            Linear(dim, dim),
+            Gain()
+        )
 
-        nn.init.zeros_(self.proj_out.weight)
-        nn.init.zeros_(self.proj_out.bias)
+        self.residual_mp_add = MPAdd(t = mp_add_t)
 
-    @residualize
     @handle_maybe_channel_last
     def forward(
         self,
@@ -247,10 +347,14 @@ class MPAttentionInflationBlock(Module):
 
         x, ps = pack_one(x, '* t c')
 
+        residual = x
+
         for attn in self.temporal_attns:
             x = attn(x)
 
         x = self.proj_out(x)
+
+        x = self.residual_mp_add(x, residual)
 
         x = unpack_one(x, ps, '* t c')
 
