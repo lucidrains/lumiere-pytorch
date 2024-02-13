@@ -182,7 +182,8 @@ class MPAttention(Module):
         heads = 4,
         dim_head = 64,
         num_mem_kv = 4,
-        mp_add_t = 0.3
+        mp_add_t = 0.3,
+        dropout = 0.
     ):
         super().__init__()
         self.heads = heads
@@ -190,6 +191,8 @@ class MPAttention(Module):
 
         self.scale = dim_head ** -0.5
         self.pixel_norm = PixelNorm(dim = -1)
+
+        self.dropout = nn.Dropout(dropout)
 
         self.mem_kv = nn.Parameter(torch.randn(2, heads, num_mem_kv, dim_head))
         self.to_qkv = Linear(dim, hidden_dim * 3)
@@ -211,7 +214,10 @@ class MPAttention(Module):
         q = q * self.scale
 
         sim = einsum('b h i d, b h j d -> b h i j', q, k)
+
         attn = sim.softmax(dim = -1)
+        attn = self.dropout(attn)
+
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
         out = rearrange(out, 'b h n d -> b n (h d)')
@@ -288,7 +294,8 @@ class MPConvolutionInflationBlock(Module):
         conv1d_kernel_size = 3,
         channel_last = False,
         time_dim = None,
-        mp_add_t = 0.3
+        mp_add_t = 0.3,
+        dropout = 0.
     ):
         super().__init__()
         self.time_dim = time_dim
@@ -301,7 +308,8 @@ class MPConvolutionInflationBlock(Module):
 
         self.temporal_conv = nn.Sequential(
             Conv1d(dim, dim, conv1d_kernel_size, 3),
-            MPSiLU()
+            MPSiLU(),
+            nn.Dropout(dropout)
         )
 
         self.proj_out = nn.Sequential(
@@ -355,6 +363,7 @@ class MPAttentionInflationBlock(Module):
         time_dim = None,
         channel_last = False,
         mp_add_t = 0.3,
+        dropout = 0.,
         **attn_kwargs
     ):
         super().__init__()
@@ -367,6 +376,7 @@ class MPAttentionInflationBlock(Module):
         for _ in range(depth):
             attn = MPAttention(
                 dim = dim,
+                dropout = dropout,
                 **attn_kwargs
             )
 
