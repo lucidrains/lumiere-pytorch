@@ -227,16 +227,6 @@ class MPAttention(Module):
 
 # temporal down and upsample
 
-def init_bilinear_kernel_1d_(conv: Module):
-    nn.init.zeros_(conv.weight)
-    if exists(conv.bias):
-        nn.init.zeros_(conv.bias)
-
-    channels = conv.weight.shape[0]
-    bilinear_kernel = Tensor([0.5, 1., 0.5])
-    diag_mask = torch.eye(channels).bool()
-    conv.weight.data[diag_mask] = bilinear_kernel
-
 class MPTemporalDownsample(Module):
     def __init__(
         self,
