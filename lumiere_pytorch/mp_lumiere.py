@@ -49,6 +49,11 @@ def compact_values(d: dict):
 def l2norm(t, dim = -1, eps = 1e-12):
     return F.normalize(t, dim = dim, eps = eps)
 
+def interpolate_1d(x, length, mode = 'bilinear'):
+    x = rearrange(x, 'b c t -> b c t 1')
+    x = F.interpolate(x, (length, 1), mode = mode)
+    return rearrange(x, 'b c t 1 -> b c t')
+
 # mp activations
 # section 2.5
 
@@ -84,6 +89,65 @@ class Linear(Module):
 
         weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
         return F.linear(x, weight)
+
+# forced weight normed conv2d and linear
+# algorithm 1 in paper
+
+class Conv2d(Module):
+    def __init__(
+        self,
+        dim_in,
+        dim_out,
+        kernel_size,
+        eps = 1e-4
+    ):
+        super().__init__()
+        weight = torch.randn(dim_out, dim_in, kernel_size, kernel_size)
+        self.weight = nn.Parameter(weight)
+
+        self.eps = eps
+        self.fan_in = dim_in * kernel_size ** 2
+
+    def forward(self, x):
+        if self.training:
+            with torch.no_grad():
+                weight, ps = pack_one(self.weight, 'o *')
+                normed_weight = l2norm(weight, eps = self.eps)
+                normed_weight = unpack_one(normed_weight, ps, 'o *')
+                self.weight.copy_(normed_weight)
+
+        weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
+        return F.conv2d(x, weight, padding = 'same')
+
+class Conv1d(Module):
+    def __init__(
+        self,
+        dim_in,
+        dim_out,
+        kernel_size,
+        eps = 1e-4,
+        init_dirac = False
+    ):
+        super().__init__()
+        weight = torch.randn(dim_out, dim_in, kernel_size)
+        self.weight = nn.Parameter(weight)
+
+        if init_dirac:
+            nn.init.dirac_(self.weight)
+
+        self.eps = eps
+        self.fan_in = dim_in * kernel_size
+
+    def forward(self, x):
+        if self.training:
+            with torch.no_grad():
+                weight, ps = pack_one(self.weight, 'o *')
+                normed_weight = l2norm(weight, eps = self.eps)
+                normed_weight = unpack_one(normed_weight, ps, 'o *')
+                self.weight.copy_(normed_weight)
+
+        weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
+        return F.conv1d(x, weight, padding = 'same')
 
 # pixelnorm
 # equation (30)
@@ -183,9 +247,7 @@ class MPTemporalDownsample(Module):
         super().__init__()
         self.time_dim = time_dim
         self.channel_last = channel_last
-
-        self.conv = nn.Conv1d(dim, dim, kernel_size = 3, stride = 2, padding = 1)
-        init_bilinear_kernel_1d_(self.conv)
+        self.conv = Conv1d(dim, dim, 3, init_dirac = True)
 
     @handle_maybe_channel_last
     @image_or_video_to_time
@@ -193,8 +255,10 @@ class MPTemporalDownsample(Module):
         self,
         x
     ):
-        assert x.shape[-1] > 1, 'time dimension must be greater than 1 to be compressed'
+        t = x.shape[-1]
+        assert t > 1, 'time dimension must be greater than 1 to be compressed'
 
+        x = interpolate_1d(x, t // 2)
         return self.conv(x)
 
 class MPTemporalUpsample(Module):
@@ -207,9 +271,7 @@ class MPTemporalUpsample(Module):
         super().__init__()
         self.time_dim = time_dim
         self.channel_last = channel_last
-
-        self.conv = nn.ConvTranspose1d(dim, dim, kernel_size = 3, stride = 2, padding = 1, output_padding = 1)
-        init_bilinear_kernel_1d_(self.conv)
+        self.conv = Conv1d(dim, dim, 3, init_dirac = True)
 
     @handle_maybe_channel_last
     @image_or_video_to_time
@@ -217,6 +279,8 @@ class MPTemporalUpsample(Module):
         self,
         x
     ):
+        t = x.shape[-1]
+        x = interpolate_1d(x, t * 2)
         return self.conv(x)
 
 # main modules
@@ -233,26 +297,23 @@ class MPConvolutionInflationBlock(Module):
         mp_add_t = 0.3
     ):
         super().__init__()
-        assert is_odd(conv2d_kernel_size)
-        assert is_odd(conv1d_kernel_size)
-
         self.time_dim = time_dim
         self.channel_last = channel_last
 
         self.spatial_conv = nn.Sequential(
-            nn.Conv2d(dim, dim, conv2d_kernel_size, padding = conv2d_kernel_size // 2),
+            Conv2d(dim, dim, conv2d_kernel_size, 3),
             MPSiLU()
         )
 
         self.temporal_conv = nn.Sequential(
-            nn.Conv1d(dim, dim, conv1d_kernel_size, padding = conv1d_kernel_size // 2),
+            Conv1d(dim, dim, conv1d_kernel_size, 3),
             MPSiLU()
         )
 
-        self.proj_out = nn.Conv1d(dim, dim, 1)
-
-        nn.init.zeros_(self.proj_out.weight)
-        nn.init.zeros_(self.proj_out.bias)
+        self.proj_out = nn.Sequential(
+            Conv1d(dim, dim, 1),
+            Gain()
+        )
 
         self.residual_mp_add = MPAdd(t = mp_add_t)
 

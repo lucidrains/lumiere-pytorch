@@ -75,8 +75,8 @@ assert noised_video.shape == denoised_video.shape
 - [x] expose only temporal parameters for learning, freeze everything else
 - [x] figure out the best way to deal with the time conditioning after temporal downsampling - instead of pytree transform at the beginning, probably will need to hook into all the modules and inspect the batch sizes
 - [x] handle middle modules that may have output shape as `(batch, seq, dim)`
+- [x] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
 
-- [ ] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
 - [ ] test out on <a href="https://github.com/lucidrains/imagen-pytorch">imagen-pytorch</a>
 
 ## Citations
