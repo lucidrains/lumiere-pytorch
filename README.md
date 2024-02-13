@@ -1,6 +1,6 @@
 <img src="./lumiere.png" width="450px"></img>
 
-## Lumiere - Pytorch (wip)
+## Lumiere - Pytorch
 
 Implementation of <a href="https://lumiere-video.github.io/">Lumiere</a>, SOTA text-to-video generation from Google Deepmind, in Pytorch
 
@@ -78,6 +78,7 @@ assert noised_video.shape == denoised_video.shape
 - [x] following the conclusions of Tero Karras, improvise a variant of the 4 modules with magnitude preservation
 
 - [ ] test out on <a href="https://github.com/lucidrains/imagen-pytorch">imagen-pytorch</a>
+- [ ] look into multi-diffusion and see if it can turned into some simple wrapper
 
 ## Citations
 
