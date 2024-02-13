@@ -134,6 +134,30 @@ def image_or_video_to_time(fn):
 
     return inner
 
+# handle channel last
+
+def handle_maybe_channel_last(fn):
+
+    @wraps(fn)
+    def inner(
+        self,
+        x,
+        *args,
+        **kwargs
+    ):
+
+        if self.channel_last:
+            x = rearrange(x, 'b c ... -> b ... c')
+
+        out = fn(self, x, *args, **kwargs)
+
+        if self.channel_last:
+            out = rearrange(out, 'b c ... -> b ... c')
+
+        return out
+
+    return inner
+
 # helpers
 
 def Sequential(*modules):
@@ -164,14 +188,17 @@ class TemporalDownsample(Module):
     def __init__(
         self,
         dim,
+        channel_last = False,
         time_dim = None
     ):
         super().__init__()
         self.time_dim = time_dim
+        self.channel_last = channel_last
 
         self.conv = nn.Conv1d(dim, dim, kernel_size = 3, stride = 2, padding = 1)
         init_bilinear_kernel_1d_(self.conv)
 
+    @handle_maybe_channel_last
     @image_or_video_to_time
     def forward(
         self,
@@ -185,14 +212,17 @@ class TemporalUpsample(Module):
     def __init__(
         self,
         dim,
+        channel_last = False,
         time_dim = None
     ):
         super().__init__()
         self.time_dim = time_dim
+        self.channel_last = channel_last
 
         self.conv = nn.ConvTranspose1d(dim, dim, kernel_size = 3, stride = 2, padding = 1, output_padding = 1)
         init_bilinear_kernel_1d_(self.conv)
 
+    @handle_maybe_channel_last
     @image_or_video_to_time
     def forward(
         self,
@@ -210,6 +240,7 @@ class ConvolutionInflationBlock(Module):
         conv2d_kernel_size = 3,
         conv1d_kernel_size = 3,
         groups = 8,
+        channel_last = False,
         time_dim = None
     ):
         super().__init__()
@@ -217,6 +248,7 @@ class ConvolutionInflationBlock(Module):
         assert is_odd(conv1d_kernel_size)
 
         self.time_dim = time_dim
+        self.channel_last = channel_last
 
         self.spatial_conv = nn.Sequential(
             nn.Conv2d(dim, dim, conv2d_kernel_size, padding = conv2d_kernel_size // 2),
@@ -235,6 +267,7 @@ class ConvolutionInflationBlock(Module):
         nn.init.zeros_(self.proj_out.weight)
         nn.init.zeros_(self.proj_out.bias)
 
+    @handle_maybe_channel_last
     def forward(
         self,
         x,
@@ -277,11 +310,13 @@ class AttentionInflationBlock(Module):
         prenorm = True,
         residual_attn = True,
         time_dim = None,
+        channel_last = False,
         **attn_kwargs
     ):
         super().__init__()
 
         self.time_dim = time_dim
+        self.channel_last = channel_last
 
         self.temporal_attns = ModuleList([])
 
@@ -304,6 +339,7 @@ class AttentionInflationBlock(Module):
         nn.init.zeros_(self.proj_out.weight)
         nn.init.zeros_(self.proj_out.bias)
 
+    @handle_maybe_channel_last
     def forward(
         self,
         x,
@@ -311,6 +347,9 @@ class AttentionInflationBlock(Module):
     ):
         is_video = x.ndim == 5
         assert is_video ^ (exists(batch_size) or exists(self.time_dim)), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
+
+        if self.channel_last:
+            x = rearrange(x, 'b ... c -> b c ...')
 
         if is_video:
             batch_size = x.shape[0]
@@ -338,6 +377,9 @@ class AttentionInflationBlock(Module):
             x = rearrange(x, 'b h w t c -> b c t h w')
         else:
             x = rearrange(x, 'b h w t c -> (b t) c h w')
+
+        if self.channel_last:
+            x = rearrange(x, 'b c ... -> b ... c')
 
         return x
 
@@ -375,7 +417,9 @@ class Lumiere(Module):
         upsample_module_names: List[str] = [],
         channels: int = 3,
         conv_inflation_kwargs: dict = dict(),
-        attn_inflation_kwargs: dict = dict()
+        attn_inflation_kwargs: dict = dict(),
+        downsample_kwargs: dict = dict(),
+        upsample_kwargs: dict = dict(),
     ):
         super().__init__()
 
@@ -421,8 +465,8 @@ class Lumiere(Module):
 
         self.convs = ModuleList([ConvolutionInflationBlock(dim = shape[1], **conv_inflation_kwargs) for shape in conv_shapes])
         self.attns = ModuleList([AttentionInflationBlock(dim = shape[1], **attn_inflation_kwargs) for shape in attn_shapes])
-        self.downsamples = ModuleList([TemporalDownsample(dim = shape[1]) for shape in downsample_shapes])
-        self.upsamples = ModuleList([TemporalUpsample(dim = shape[1]) for shape in upsample_shapes])
+        self.downsamples = ModuleList([TemporalDownsample(dim = shape[1], **downsample_kwargs) for shape in downsample_shapes])
+        self.upsamples = ModuleList([TemporalUpsample(dim = shape[1], **upsample_kwargs) for shape in upsample_shapes])
 
         # insert all the temporal modules with hooks
 
