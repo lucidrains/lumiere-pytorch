@@ -16,7 +16,7 @@ from torch.nn import Module, ModuleList
 import torch.nn.functional as F
 
 from beartype import beartype
-from beartype.typing import List, Tuple, Optional
+from beartype.typing import List, Tuple, Optional, Type
 
 from einops import rearrange, pack, unpack, repeat
 
@@ -92,9 +92,13 @@ def freeze_all_layers_(module):
 
 # function that takes in the entire text-to-video network, and sets the time dimension
 
-def set_time_dim_(model: Module, time_dim: int):
+def set_time_dim_(
+    klasses: Tuple[Type[Module]],
+    model: Module,
+    time_dim: int
+):
     for model in model.modules():
-        if isinstance(model, (AttentionInflationBlock, ConvolutionInflationBlock, TemporalUpsample, TemporalDownsample)):
+        if isinstance(model, klasses):
             model.time_dim = time_dim
 
 # decorator for converting an input tensor from either image or video format to 1d time
@@ -420,6 +424,10 @@ class Lumiere(Module):
         attn_inflation_kwargs: dict = dict(),
         downsample_kwargs: dict = dict(),
         upsample_kwargs: dict = dict(),
+        conv_klass = ConvolutionInflationBlock,
+        attn_klass = AttentionInflationBlock,
+        downsample_klass = TemporalDownsample,
+        upsample_klass = TemporalUpsample
     ):
         super().__init__()
 
@@ -461,12 +469,21 @@ class Lumiere(Module):
         downsample_shapes = extract_output_shapes(downsample_modules, self.model, mock_images, unet_kwarg)
         upsample_shapes = extract_output_shapes(upsample_modules, self.model, mock_images, unet_kwarg)
 
+        # temporal klasses - for setting temporal dimension on forward
+
+        self.temporal_klasses = (
+            conv_klass,
+            attn_klass,
+            downsample_klass,
+            upsample_klass
+        )
+
         # all modules
 
-        self.convs = ModuleList([ConvolutionInflationBlock(dim = shape[1], **conv_inflation_kwargs) for shape in conv_shapes])
-        self.attns = ModuleList([AttentionInflationBlock(dim = shape[1], **attn_inflation_kwargs) for shape in attn_shapes])
-        self.downsamples = ModuleList([TemporalDownsample(dim = shape[1], **downsample_kwargs) for shape in downsample_shapes])
-        self.upsamples = ModuleList([TemporalUpsample(dim = shape[1], **upsample_kwargs) for shape in upsample_shapes])
+        self.convs = ModuleList([conv_klass(dim = shape[1], **conv_inflation_kwargs) for shape in conv_shapes])
+        self.attns = ModuleList([attn_klass(dim = shape[1], **attn_inflation_kwargs) for shape in attn_shapes])
+        self.downsamples = ModuleList([downsample_klass(dim = shape[1], **downsample_kwargs) for shape in downsample_shapes])
+        self.upsamples = ModuleList([upsample_klass(dim = shape[1], **upsample_kwargs) for shape in upsample_shapes])
 
         # insert all the temporal modules with hooks
 
@@ -549,7 +566,7 @@ class Lumiere(Module):
 
         # set the correct time dimension for all temporal layers
 
-        set_time_dim_(self, time)
+        set_time_dim_(self.temporal_klasses, self, time)
 
         # forward all images into text-to-image model
 
