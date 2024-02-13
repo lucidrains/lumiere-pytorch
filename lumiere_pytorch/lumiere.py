@@ -101,6 +101,22 @@ def set_time_dim_(
         if isinstance(model, klasses):
             model.time_dim = time_dim
 
+# decorator for residual
+
+def residualize(fn):
+    @wraps(fn)
+    def inner(
+        self,
+        x,
+        *args,
+        **kwargs
+    ):
+        residual = x
+        out = fn(self, x, *args, **kwargs)
+        return out + residual
+
+    return inner
+
 # decorator for converting an input tensor from either image or video format to 1d time
 
 def image_or_video_to_time(fn):
@@ -271,13 +287,13 @@ class ConvolutionInflationBlock(Module):
         nn.init.zeros_(self.proj_out.weight)
         nn.init.zeros_(self.proj_out.bias)
 
+    @residualize
     @handle_maybe_channel_last
     def forward(
         self,
         x,
         batch_size = None
     ):
-        residual = x
         is_video = x.ndim == 5
 
         if is_video:
@@ -303,7 +319,7 @@ class ConvolutionInflationBlock(Module):
         else:
             x = rearrange(x, 'b h w c t -> (b t) c h w')
 
-        return x + residual
+        return x
 
 class AttentionInflationBlock(Module):
     def __init__(
@@ -343,6 +359,7 @@ class AttentionInflationBlock(Module):
         nn.init.zeros_(self.proj_out.weight)
         nn.init.zeros_(self.proj_out.bias)
 
+    @residualize
     @handle_maybe_channel_last
     def forward(
         self,
@@ -366,14 +383,10 @@ class AttentionInflationBlock(Module):
 
         x, ps = pack_one(x, '* t c')
 
-        residual = x
-
         for attn in self.temporal_attns:
             x = attn(x)
 
         x = self.proj_out(x)
-
-        x = x + residual
 
         x = unpack_one(x, ps, '* t c')
 
