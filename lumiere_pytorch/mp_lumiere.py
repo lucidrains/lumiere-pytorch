@@ -6,12 +6,12 @@ from math import sqrt
 from functools import partial
 
 import torch
-from torch import nn, einsum, Tensor, is_tensor
+from torch import nn, einsum, Tensor
 from torch.nn import Module, ModuleList
 import torch.nn.functional as F
 
 from beartype import beartype
-from beartype.typing import List, Tuple, Optional, Type
+from beartype.typing import List, Tuple, Optional
 
 from einops import rearrange, pack, unpack, repeat
 
@@ -34,12 +34,6 @@ def pack_one(t, pattern):
 
 def unpack_one(t, ps, pattern):
     return unpack(t, ps, pattern)[0]
-
-def divisible_by(num, den):
-    return (num % den) == 0
-
-def is_odd(n):
-    return not divisible_by(n, 2)
 
 def compact_values(d: dict):
     return {k: v for k, v in d.items() if exists(v)}
