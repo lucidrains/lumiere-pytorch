@@ -22,7 +22,7 @@ $ pip install lumiere-pytorch
 
 ```python
 import torch
-from lumiere_pytorch import Lumiere
+from lumiere_pytorch import MPLumiere
 
 from denoising_diffusion_pytorch import KarrasUnet
 
@@ -33,7 +33,7 @@ karras_unet = KarrasUnet(
     dim_max = 768
 )
 
-lumiere = Lumiere(
+lumiere = MPLumiere(
     karras_unet,
     image_size = 256,
     unet_time_kwarg = 'time',
