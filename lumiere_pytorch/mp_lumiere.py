@@ -43,6 +43,12 @@ def compact_values(d: dict):
 def l2norm(t, dim = -1, eps = 1e-12):
     return F.normalize(t, dim = dim, eps = eps)
 
+def normalize_weight(weight, eps = 1e-4):
+    weight, ps = pack_one(weight, 'o *')
+    normed_weight = l2norm(weight, eps = eps)
+    normed_weight = normed_weight * sqrt(weight.numel() / weight.shape[0])
+    return unpack_one(normed_weight, ps, 'o *')
+
 def interpolate_1d(x, length, mode = 'bilinear'):
     x = rearrange(x, 'b c t -> b c t 1')
     x = F.interpolate(x, (length, 1), mode = mode)
@@ -78,10 +84,10 @@ class Linear(Module):
     def forward(self, x):
         if self.training:
             with torch.no_grad():
-                normed_weight = l2norm(self.weight, eps = self.eps)
+                normed_weight = normalize_weight(self.weight, eps = self.eps)
                 self.weight.copy_(normed_weight)
 
-        weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
+        weight = normalize_weight(self.weight, eps = self.eps) / sqrt(self.fan_in)
         return F.linear(x, weight)
 
 # forced weight normed conv2d and linear
@@ -105,12 +111,10 @@ class Conv2d(Module):
     def forward(self, x):
         if self.training:
             with torch.no_grad():
-                weight, ps = pack_one(self.weight, 'o *')
-                normed_weight = l2norm(weight, eps = self.eps)
-                normed_weight = unpack_one(normed_weight, ps, 'o *')
+                normed_weight = normalize_weight(self.weight, eps = self.eps)
                 self.weight.copy_(normed_weight)
 
-        weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
+        weight = normalize_weight(self.weight, eps = self.eps) / sqrt(self.fan_in)
         return F.conv2d(x, weight, padding = 'same')
 
 class Conv1d(Module):
@@ -135,12 +139,10 @@ class Conv1d(Module):
     def forward(self, x):
         if self.training:
             with torch.no_grad():
-                weight, ps = pack_one(self.weight, 'o *')
-                normed_weight = l2norm(weight, eps = self.eps)
-                normed_weight = unpack_one(normed_weight, ps, 'o *')
+                normed_weight = normalize_weight(self.weight, eps = self.eps)
                 self.weight.copy_(normed_weight)
 
-        weight = l2norm(self.weight, eps = self.eps) / sqrt(self.fan_in)
+        weight = normalize_weight(self.weight, eps = self.eps) / sqrt(self.fan_in)
         return F.conv1d(x, weight, padding = 'same')
 
 # pixelnorm
