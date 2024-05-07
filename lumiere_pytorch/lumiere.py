@@ -193,6 +193,20 @@ class Residual(Module):
     def forward(self, t, *args, **kwargs):
         return self.fn(t, *args, **kwargs) + t
 
+# channel rmsnorm
+
+class ChanFirstRMSNorm(Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.scale = dim ** 0.5
+        self.gamma = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        assert x.ndim > 2
+        dims = (1,) * (x.ndim - 2)
+        gamma = self.gamma.reshape(-1, *dims)
+        return F.normalize(x, dim = -1) * self.scale * gamma
+
 # temporal down and upsample
 
 def init_bilinear_kernel_1d_(conv: Module):
@@ -262,7 +276,6 @@ class ConvolutionInflationBlock(Module):
         dim,
         conv2d_kernel_size = 3,
         conv1d_kernel_size = 3,
-        groups = 8,
         channel_last = False,
         time_dim = None
     ):
@@ -276,13 +289,13 @@ class ConvolutionInflationBlock(Module):
 
         self.spatial_conv = nn.Sequential(
             nn.Conv2d(dim, dim, conv2d_kernel_size, padding = conv2d_kernel_size // 2),
-            nn.GroupNorm(groups, num_channels = dim),
+            ChanFirstRMSNorm(dim),
             nn.SiLU()
         )
 
         self.temporal_conv = nn.Sequential(
             nn.Conv1d(dim, dim, conv1d_kernel_size, padding = conv1d_kernel_size // 2),
-            nn.GroupNorm(groups, num_channels = dim),
+            ChanFirstRMSNorm(dim),
             nn.SiLU()
         )
 
@@ -373,6 +386,8 @@ class AttentionInflationBlock(Module):
         batch_size = None
     ):
         is_video = x.ndim == 5
+
+        batch_size = default(batch_size, self.batch_dim)
         assert is_video ^ (exists(batch_size) or exists(self.time_dim)), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
 
         if self.channel_last:
