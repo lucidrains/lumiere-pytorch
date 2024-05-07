@@ -30,7 +30,7 @@ karras_unet = KarrasUnet(
     image_size = 256,
     dim = 8,
     channels = 3,
-    dim_max = 768
+    dim_max = 768,
 )
 
 lumiere = MPLumiere(
@@ -39,16 +39,20 @@ lumiere = MPLumiere(
     unet_time_kwarg = 'time',
     conv_module_names = [
         'downs.1',
-        'ups.1'
+        'ups.1',
+        'downs.2',
+        'ups.2',
     ],
     attn_module_names = [
         'mids.0'
     ],
     upsample_module_names = [
-        'ups.1'
+        'ups.2',
+        'ups.1',
     ],
     downsample_module_names = [
-        'downs.1'
+        'downs.1',
+        'downs.2'
     ]
 )
 
