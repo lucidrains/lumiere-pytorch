@@ -53,17 +53,17 @@ def compact_values(d: dict):
 # extract dimensions using hooks
 
 @beartype
-def extract_output_shapes(
+def extract_forward_hook_outputs(
     modules: List[Module],
     model: Module,
     model_input,
     model_kwargs: dict = dict()
 ):
-    shapes = []
     hooks = []
+    all_hook_args = []
 
-    def hook_fn(_, input, output):
-        return shapes.append(output.shape)
+    def hook_fn(*hook_args):
+        return all_hook_args.append(hook_args)
 
     for module in modules:
         hook = module.register_forward_hook(hook_fn)
@@ -75,7 +75,7 @@ def extract_output_shapes(
     for hook in hooks:
         hook.remove()
 
-    return shapes
+    return all_hook_args
 
 # freezing text-to-image, and only learning temporal parameters
 
@@ -482,12 +482,24 @@ class Lumiere(Module):
         mock_time = torch.ones((1,))
         unet_kwarg = {unet_time_kwarg: mock_time}
 
-        # get all dimensions
+        # extract all hook outputs
 
-        conv_shapes = extract_output_shapes(conv_modules, self.model, mock_images, unet_kwarg)
-        attn_shapes = extract_output_shapes(attn_modules, self.model, mock_images, unet_kwarg)
-        downsample_shapes = extract_output_shapes(downsample_modules, self.model, mock_images, unet_kwarg)
-        upsample_shapes = extract_output_shapes(upsample_modules, self.model, mock_images, unet_kwarg)
+        conv_hook_args = extract_forward_hook_outputs(conv_modules, self.model, mock_images, unet_kwarg)
+        attn_hook_args = extract_forward_hook_outputs(attn_modules, self.model, mock_images, unet_kwarg)
+        downsample_hook_args = extract_forward_hook_outputs(downsample_modules, self.model, mock_images, unet_kwarg)
+        upsample_hook_args = extract_forward_hook_outputs(upsample_modules, self.model, mock_images, unet_kwarg)
+
+        # reorder all modules by execution order and also extract output shape
+
+        conv_modules, _, conv_outputs = zip(*conv_hook_args)
+        attn_modules, _, attn_outputs = zip(*attn_hook_args)
+        downsample_modules, _, downsample_outputs = zip(*downsample_hook_args)
+        upsample_modules, _, upsample_outputs = zip(*upsample_hook_args)
+
+        conv_shapes = [t.shape for t in conv_outputs]
+        attn_shapes = [t.shape for t in attn_outputs]
+        downsample_shapes = [t.shape for t in downsample_outputs]
+        upsample_shapes = [t.shape for t in upsample_outputs]
 
         # temporal klasses - for setting temporal dimension on forward
 
