@@ -2,8 +2,7 @@ from lumiere_pytorch.lumiere import (
     ConvolutionInflationBlock,
     AttentionInflationBlock,
     TemporalDownsample,
-    TemporalUpsample,
-    set_time_dim_
+    TemporalUpsample
 )
 
 from lumiere_pytorch.lumiere import Lumiere

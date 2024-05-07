@@ -16,7 +16,7 @@ from torch.nn import Module, ModuleList
 import torch.nn.functional as F
 
 from beartype import beartype
-from beartype.typing import List, Tuple, Optional, Type
+from beartype.typing import List, Tuple, Optional, Type, Any
 
 from einops import rearrange, pack, unpack, repeat
 
@@ -92,14 +92,15 @@ def freeze_all_layers_(module):
 
 # function that takes in the entire text-to-video network, and sets the time dimension
 
-def set_time_dim_(
+def set_attr_on_klasses_(
     klasses: Tuple[Type[Module]],
     model: Module,
-    time_dim: int
+    attr_name: str,
+    value: Any
 ):
     for model in model.modules():
         if isinstance(model, klasses):
-            model.time_dim = time_dim
+            setattr(model, attr_name, value)
 
 # decorator for residual
 
@@ -135,7 +136,7 @@ def image_or_video_to_time(fn):
             batch_size = x.shape[0]
             x = rearrange(x, 'b c t h w -> b h w c t')
         else:
-            assert exists(batch_size) or exists(self.time_dim)
+            batch_size = default(batch_size, self.batch_dim)
             rearrange_kwargs = dict(b = batch_size, t = self.time_dim)
             x = rearrange(x, '(b t) c h w -> b h w c t', **compact_values(rearrange_kwargs))
 
@@ -212,6 +213,7 @@ class TemporalDownsample(Module):
         time_dim = None
     ):
         super().__init__()
+        self.batch_dim = None
         self.time_dim = time_dim
         self.channel_last = channel_last
 
@@ -236,6 +238,7 @@ class TemporalUpsample(Module):
         time_dim = None
     ):
         super().__init__()
+        self.batch_dim = None
         self.time_dim = time_dim
         self.channel_last = channel_last
 
@@ -267,6 +270,7 @@ class ConvolutionInflationBlock(Module):
         assert is_odd(conv2d_kernel_size)
         assert is_odd(conv1d_kernel_size)
 
+        self.batch_dim = None
         self.time_dim = time_dim
         self.channel_last = channel_last
 
@@ -302,6 +306,7 @@ class ConvolutionInflationBlock(Module):
 
         x = self.spatial_conv(x)
 
+        batch_size = default(batch_size, self.batch_dim)
         rearrange_kwargs = compact_values(dict(b = batch_size, t = self.time_dim))
 
         assert len(rearrange_kwargs) > 0, 'either batch_size is passed in on forward, or time_dim is set on init'
@@ -335,6 +340,7 @@ class AttentionInflationBlock(Module):
     ):
         super().__init__()
 
+        self.batch_dim = None
         self.time_dim = time_dim
         self.channel_last = channel_last
 
@@ -376,6 +382,7 @@ class AttentionInflationBlock(Module):
             batch_size = x.shape[0]
             x = rearrange(x, 'b c t h w -> b h w t c')
         else:
+            batch_size = default(batch_size, self.batch_dim)
             assert exists(batch_size) or exists(self.time_dim)
 
             rearrange_kwargs = dict(b = batch_size, t = self.time_dim)
@@ -579,7 +586,7 @@ class Lumiere(Module):
 
         # set the correct time dimension for all temporal layers
 
-        set_time_dim_(self.temporal_klasses, self, time)
+        set_attr_on_klasses_(self.temporal_klasses, self, 'batch_dim', batch)
 
         # forward all images into text-to-image model
 

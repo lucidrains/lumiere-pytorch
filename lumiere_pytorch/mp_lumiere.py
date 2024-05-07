@@ -290,6 +290,7 @@ class MPConvolutionInflationBlock(Module):
         dropout = 0.
     ):
         super().__init__()
+        self.batch_dim = None
         self.time_dim = time_dim
         self.channel_last = channel_last
 
@@ -327,6 +328,7 @@ class MPConvolutionInflationBlock(Module):
 
         x = self.spatial_conv(x)
 
+        batch_size = default(batch_size, self.batch_dim)
         rearrange_kwargs = compact_values(dict(b = batch_size, t = self.time_dim))
 
         assert len(rearrange_kwargs) > 0, 'either batch_size is passed in on forward, or time_dim is set on init'
@@ -388,13 +390,14 @@ class MPAttentionInflationBlock(Module):
         batch_size = None
     ):
         is_video = x.ndim == 5
+
+        batch_size = default(batch_size, self.batch_dim)
         assert is_video ^ (exists(batch_size) or exists(self.time_dim)), 'either a tensor of shape (batch, channels, time, height, width) is passed in, or (batch * time, channels, height, width) along with `batch_size`'
 
         if self.channel_last:
             x = rearrange(x, 'b ... c -> b c ...')
 
         if is_video:
-            batch_size = x.shape[0]
             x = rearrange(x, 'b c t h w -> b h w t c')
         else:
             assert exists(batch_size) or exists(self.time_dim)
