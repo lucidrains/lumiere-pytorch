@@ -18,7 +18,6 @@ setup(
   install_requires=[
     'beartype',
     'einops>=0.7.0',
-    'optree',
     'torch>=2.0',
     'x-transformers'
   ],
