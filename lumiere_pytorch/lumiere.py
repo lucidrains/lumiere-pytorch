@@ -21,6 +21,7 @@ from beartype.typing import List, Tuple, Optional, Type, Any
 from einops import rearrange, pack, unpack, repeat
 
 from optree import tree_flatten, tree_unflatten
+import torch.utils._pytree as pytree
 
 from x_transformers.x_transformers import (
     Attention,
@@ -546,7 +547,11 @@ class Lumiere(Module):
             first_arg, *rest_args = args
 
             all_rest_args = (rest_args, kwargs)
-            all_rest_args, pytree_spec = tree_flatten(all_rest_args)
+            if torch.compiler.is_dynamo_compiling():
+                all_rest_args, pytree_spec = pytree.tree_flatten(all_rest_args)
+            else:
+                all_rest_args, pytree_spec = tree_flatten(all_rest_args)
+
 
             if not is_tensor(first_arg) or len(all_rest_args) == 0:
                 return args, kwargs
@@ -566,7 +571,11 @@ class Lumiere(Module):
 
                 out_rest_args.append(arg)
 
-            rest_args, kwargs = tree_unflatten(pytree_spec, out_rest_args)
+            if torch.compiler.is_dynamo_compiling():
+                # reordering of args is deliberate. pytree and optree have different API
+                rest_args, kwargs = pytree.tree_unflatten(out_rest_args, pytree_spec)
+            else:
+                rest_args, kwargs = tree_unflatten(pytree_spec, out_rest_args)
             return (first_arg, *rest_args), kwargs
 
         for module in self.modules():
